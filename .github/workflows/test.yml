@@ -41,12 +41,11 @@ jobs:
     - name: Run tests
       run: uv run pytest --junitxml=tests.xml
     - name: Test Report
-      uses: dorny/test-reporter@v2
+      uses: mikepenz/action-junit-report@v6
       if: success() || failure()
       with:
-        name: Test Results (Python version ${{ matrix.python-version }})
-        path: tests.xml
-        reporter: java-junit
+        check_name: Test Results (Python version ${{ matrix.python-version }})
+        report_paths: tests.xml
 
   coverage:
     strategy:
