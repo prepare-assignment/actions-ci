@@ -1,0 +1,94 @@
+name: Release
+
+# Reusable release workflow for the tasks. Call it on a push to main:
+#
+#   on:
+#     push:
+#       branches: [main]
+#   concurrency:
+#     group: semantic-release-${{ github.ref }}
+#     cancel-in-progress: false
+#   jobs:
+#     release:
+#       uses: prepare-assignment/actions-ci/.github/workflows/release.yml@main
+#       permissions:
+#         contents: write
+#         issues: write
+#         pull-requests: write
+#
+# semantic-release reads the .releaserc.json of the calling repository. A release is a tag (vX.Y.Z) and a
+# GitHub release, the tasks are not published to PyPI (core clones them).
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: Determine the next version without tagging or releasing
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      published:
+        description: Whether a new version was released
+        value: ${{ jobs.release.outputs.published }}
+      version:
+        description: The released version (e.g. 1.2.3)
+        value: ${{ jobs.release.outputs.version }}
+
+jobs:
+  release:
+    name: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the GitHub release
+      issues: write # comment "released in vX.Y.Z" on issues
+      pull-requests: write # and on the PRs that fed the release
+    outputs:
+      published: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+      major: ${{ steps.semantic.outputs.new_release_major_version }}
+      sha: ${{ steps.semantic.outputs.new_release_git_head }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # semantic-release walks back to the previous tag to decide the bump,
+          # so a shallow clone makes it compute the wrong version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Pinned to an exact version: this action publishes no floating major tags.
+      # The conventionalcommits preset (which understands `feat!:`) has to be installed. Version 9:
+      # version 10 needs a newer changelog writer than the bundled release-notes-generator uses.
+      - name: Semantic release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v6.0.0
+        with:
+          dry_run: ${{ inputs.dry-run }}
+          extra_plugins: |
+            conventional-changelog-conventionalcommits@9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Like GitHub Actions, the major tag (e.g. v1) always points at the newest release of that major version,
+  # so `uses: <task>@v1` gets the latest fixes.
+  major-tag:
+    name: move major tag
+    needs: release
+    if: needs.release.outputs.published == 'true' && !inputs.dry-run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - name: Move v${{ needs.release.outputs.major }} to v${{ needs.release.outputs.version }}
+        env:
+          MAJOR: v${{ needs.release.outputs.major }}
+          SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          git tag --force "$MAJOR" "$SHA"
+          git push --force origin "refs/tags/$MAJOR"
